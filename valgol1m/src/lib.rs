@@ -130,6 +130,12 @@ impl M {
     }
 }
 
+impl Default for M {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug)]
 pub enum MInstr {
     // branch
