@@ -7,8 +7,15 @@ name = "minilexer"
 version = "0.1.0"
 
 [[package]]
-name = "valgol1m"
+name = "mparse"
 version = "0.1.0"
 dependencies = [
  "minilexer",
+]
+
+[[package]]
+name = "valgol1m"
+version = "0.1.0"
+dependencies = [
+ "mparse",
 ]

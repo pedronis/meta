@@ -1,9 +1,6 @@
-use minilexer::Lexer;
-use minilexer::Token;
+use mparse::ParseableInstr;
 use std::collections::HashMap;
-use std::convert::From;
 use std::error::Error;
-use std::fs;
 
 const PRINT_AREA_SIZE: usize = 100;
 const EPS: f64 = 0.000001;
@@ -94,7 +91,7 @@ impl M {
         self.print_area.truncate(0);
     }
 
-    pub fn execute(&mut self, pgm: &MProgram) {
+    pub fn execute(&mut self, pgm: &mparse::MProgram<MInstr>) {
         let mut ic: usize = 0;
         loop {
             match &pgm.instrs[ic] {
@@ -155,223 +152,81 @@ pub enum MInstr {
     Undef,
 }
 
-type Labels = HashMap<String, u32>;
-type ICs = HashMap<u32, usize>;
+impl ParseableInstr for MInstr {
+    const UNDEF: Self = MInstr::Undef;
+    const ACCEPT_BLK: bool = true;
 
-impl MInstr {
-    fn resolve_aaa(&mut self, labels: &Labels) -> Result<(), Box<dyn Error>> {
-        let aaa = match self {
-            MInstr::ST(aaa, _) | MInstr::LD(aaa, _) => aaa.to_string(),
-            _ => {
-                return Err(From::from("internal error: unknown aaa instruction"));
+    fn is_undefined(&self) -> bool {
+        matches!(self, MInstr::Undef)
+    }
+
+    fn with_label(ins: &str, label: String) -> Self {
+        match ins {
+            "B" => MInstr::B(label, 0),
+            "ST" => MInstr::ST(label, 0),
+            "LD" => MInstr::LD(label, 0),
+            "BTP" => MInstr::BTP(label, 0),
+            "BFP" => MInstr::BFP(label, 0),
+            _ => MInstr::Undef,
+        }
+    }
+
+    fn with_num(ins: &str, n: f64) -> Self {
+        match ins {
+            "LDL" => MInstr::LDL(n),
+            _ => MInstr::Undef,
+        }
+    }
+
+    fn with_string(ins: &str, s: String) -> Self {
+        match ins {
+            "EDT" => MInstr::EDT(s),
+            _ => MInstr::Undef,
+        }
+    }
+
+    fn with_noarg(ins: &str) -> Self {
+        match ins {
+            "EQU" => MInstr::EQU,
+            "ADD" => MInstr::ADD,
+            "SUB" => MInstr::SUB,
+            "MLT" => MInstr::MLT,
+            "PNT" => MInstr::PNT,
+            "HLT" => MInstr::HLT,
+            _ => MInstr::Undef,
+        }
+    }
+
+    fn aaa_of(&self) -> mparse::AAAUse {
+        match self {
+            MInstr::ST(aaa, _) | MInstr::LD(aaa, _) => mparse::AAAUse::Mem(aaa.to_string()),
+            MInstr::B(aaa, _) | MInstr::BFP(aaa, _) | MInstr::BTP(aaa, _) => {
+                mparse::AAAUse::IC(aaa.to_string())
             }
-        };
-        let addr = if let Some(addr) = labels.get(&aaa) {
-            *addr
-        } else {
-            return Err(From::from(format!("unknown label {aaa}")));
-        };
+            _ => mparse::AAAUse::None,
+        }
+    }
+
+    fn reconstruct_with_addr(&mut self, aaa: String, addr: u32) {
         *self = match self {
             MInstr::ST(_, _) => MInstr::ST(aaa, addr),
             MInstr::LD(_, _) => MInstr::LD(aaa, addr),
-            _ => {
-                return Err(From::from("internal error: unknown aaa instruction"));
-            }
-        };
-        Ok(())
+            _ => panic!("internal error: unknown aaa instruction"),
+        }
     }
 
-    fn resolve_ic(
-        &mut self,
-        labels: &Labels,
-        ic: &ICs,
-        pgm_len: usize,
-    ) -> Result<(), Box<dyn Error>> {
-        let aaa = match self {
-            MInstr::B(aaa, _) | MInstr::BFP(aaa, _) | MInstr::BTP(aaa, _) => aaa.to_string(),
-            _ => {
-                return Err(From::from("internal error: unknown aaa instruction"));
-            }
-        };
-        let addr = if let Some(addr) = labels.get(&aaa) {
-            *addr
-        } else {
-            return Err(From::from(format!("unknown label {aaa}")));
-        };
-        let ic = if let Some(ic) = ic.get(&addr) {
-            *ic
-        } else {
-            return Err(From::from(format!(
-                "internal error: unmatched addr {addr} for ic"
-            )));
-        };
-        if ic >= pgm_len {
-            return Err(From::from(format!(
-                "instruction counter {ic} for {aaa} without instruction"
-            )));
-        }
+    fn reconstruct_with_ic(&mut self, aaa: String, ic: usize) {
         *self = match self {
             MInstr::B(_, _) => MInstr::B(aaa, ic),
             MInstr::BFP(_, _) => MInstr::BFP(aaa, ic),
             MInstr::BTP(_, _) => MInstr::BTP(aaa, ic),
-            _ => {
-                return Err(From::from("internal error: unknown aaa instruction"));
-            }
+            _ => panic!("internal error: unknown aaa instruction"),
         };
-        Ok(())
     }
-}
-
-#[derive(Debug)]
-pub struct MProgram {
-    pub instrs: Vec<MInstr>,
-    pub labels: Labels,
-    pub ic: ICs,
-    addr: u32,
-}
-
-impl MProgram {
-    fn new() -> Self {
-        MProgram {
-            instrs: Vec::new(),
-            labels: Labels::new(),
-            ic: ICs::new(),
-            addr: 0,
-        }
-    }
-
-    fn parse(&mut self, pgm: &str) -> Result<(), Box<dyn Error>> {
-        for mut line in pgm.lines() {
-            line = line.trim_end();
-            if line.is_empty() {
-                continue;
-            };
-            let mut lx = Lexer::new(line, &["#"]);
-            let tok = lx.next_token()?;
-            match tok {
-                Token::Id(id) => self.add_label(&id),
-                Token::WS => {
-                    let is_end = self.add_instr(&mut lx, line)?;
-                    if is_end {
-                        break;
-                    }
-                }
-                Token::Symbol(s) if s == "#" => (),
-                _ => return Err(From::from(format!("unexpected {:?}", tok))),
-            }
-        }
-
-        //self.debug_ics();
-        self.resolve()?;
-        Ok(())
-    }
-
-    fn add_label(&mut self, label: &str) {
-        self.labels.insert(label.to_string(), self.addr);
-        self.ic.insert(self.addr, self.instrs.len());
-    }
-
-    fn add_instr(&mut self, lx: &mut Lexer, line: &str) -> Result<bool, Box<dyn Error>> {
-        let ins = match lx.next_token()? {
-            Token::End => return Ok(true),
-            Token::Symbol(s) if s == "#" => return Ok(false),
-            Token::Id(instr) => instr,
-            unexp => return Err(From::from(format!("unexpected {:?}", unexp))),
-        };
-        let ins = ins.as_str();
-
-        let mut tok = lx.next_token()?;
-        if tok == Token::WS {
-            tok = lx.next_token()?;
-        }
-
-        let mut inc = 2;
-        let instr = match tok {
-            Token::WS => panic!("internal error: repeated whitespace token"),
-            Token::Id(label) => match ins {
-                "B" => MInstr::B(label, 0),
-                "ST" => MInstr::ST(label, 0),
-                "LD" => MInstr::LD(label, 0),
-                "BTP" => MInstr::BTP(label, 0),
-                "BFP" => MInstr::BFP(label, 0),
-                _ => MInstr::Undef,
-            },
-            Token::Num(n) => match ins {
-                "BLK" => {
-                    if n.fract() != 0.0 || n < 0.0 {
-                        return Err(From::from("invalid BLK: {line}"));
-                    }
-                    self.addr += n as u32;
-                    return Ok(false);
-                }
-                "LDL" => MInstr::LDL(n),
-                _ => MInstr::Undef,
-            },
-            Token::Str(s) => match ins {
-                "EDT" => MInstr::EDT(s),
-                _ => MInstr::Undef,
-            },
-            Token::Symbol(s) if s != "#" => {
-                return Err(From::from(format!("invalid line {line}")));
-            }
-            Token::End | Token::Symbol(_) => {
-                inc = 1;
-                match ins {
-                    "EQU" => MInstr::EQU,
-                    "ADD" => MInstr::ADD,
-                    "SUB" => MInstr::SUB,
-                    "MLT" => MInstr::MLT,
-                    "PNT" => MInstr::PNT,
-                    "HLT" => MInstr::HLT,
-                    "END" => return Ok(true),
-                    _ => MInstr::Undef,
-                }
-            }
-        };
-        if let MInstr::Undef = instr {
-            return Err(From::from(format!("invalid instruction {line}")));
-        }
-
-        self.instrs.push(instr);
-        self.addr += inc;
-        Ok(false)
-    }
-
-    fn resolve(&mut self) -> Result<(), Box<dyn Error>> {
-        let pgm_len = self.instrs.len();
-        for instr in self.instrs.iter_mut() {
-            match instr {
-                MInstr::ST(_, _) | MInstr::LD(_, _) => instr.resolve_aaa(&self.labels)?,
-                MInstr::B(_, _) | MInstr::BFP(_, _) | MInstr::BTP(_, _) => {
-                    instr.resolve_ic(&self.labels, &self.ic, pgm_len)?
-                }
-                _ => (),
-            }
-        }
-        Ok(())
-    }
-
-    pub fn debug_ics(&self) {
-        for (label, addr) in self.labels.iter() {
-            let ic = self.ic.get(addr).unwrap();
-            let instr = match self.instrs.get(*ic) {
-                Some(i) => i,
-                None => &MInstr::Undef,
-            };
-            println!("{label:#?} {addr} ic:{ic} {instr:#?}")
-        }
-    }
-}
-
-pub fn load(pgm_path: &str) -> Result<MProgram, Box<dyn Error>> {
-    let mut p = MProgram::new();
-    let pgm = fs::read_to_string(pgm_path)?;
-    p.parse(&pgm)?;
-    Ok(p)
 }
 
 pub fn run(opts: Options) -> Result<(), Box<dyn Error>> {
-    let p = load(&opts.pgm_path)?;
+    let p = mparse::load::<MInstr>(&opts.pgm_path)?;
     println!("{p:#?}");
     let mut m = M::new();
     m.execute(&p);
@@ -398,11 +253,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mprogram_parse_vs_lexing() {
-        let mut p = MProgram::new();
-        assert!(p
-            .parse(
-                r#"
+    fn parse_vs_lexing() {
+        assert!(mparse::parse::<MInstr>(
+            r#"
   # comment
 # comment
  B  A # jump
@@ -415,8 +268,8 @@ A  # label
    EDT'233'
    END#comment
 "#
-            )
-            .is_ok());
+        )
+        .is_ok());
     }
 
     #[test]
