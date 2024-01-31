@@ -1,0 +1,9 @@
+[workspace]
+resolver ="2"
+
+members = [
+  #"meta", "metabstrp",
+  #"mparse",
+  "minilexer",
+  "valgol1m",
+]
