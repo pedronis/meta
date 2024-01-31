@@ -2,7 +2,7 @@
 resolver ="2"
 
 members = [
-  #"meta", "metabstrp",
+  "meta", "metabstrp",
   "mparse",
   "minilexer",
   "valgol1m",

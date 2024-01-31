@@ -3,6 +3,20 @@
 version = 3
 
 [[package]]
+name = "meta"
+version = "0.1.0"
+dependencies = [
+ "mparse",
+]
+
+[[package]]
+name = "metabstrp"
+version = "0.1.0"
+dependencies = [
+ "meta",
+]
+
+[[package]]
 name = "minilexer"
 version = "0.1.0"
 
