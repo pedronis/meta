@@ -7,9 +7,10 @@ fn main() {
     let syn_path = args.next().expect("missing syntax file path");
     let syntax = fs::read_to_string(syn_path).expect("cannot read syntax file");
     let mut m = meta::M::new(&syntax);
-    match program(&mut m) {
-        Ok(meta::Recognized) => println!("{}", m.generated()),
-        _ => println!("SAD {}", m.left()),
+    let _ = program(&mut m);
+    match m.generated() {
+        Ok(out) => println!("{}", out),
+        Err(_) => println!("unexpected:\n{}", m.left()),
     }
 }
 
@@ -70,7 +71,7 @@ fn output(m: &mut meta::M) -> meta::MResult {
 fn ex3(m: &mut meta::M) -> meta::MResult {
     with_cll(3, m, |m| {
         if m.id() {
-            m.cl("CLL ");
+            m.cl("CLL");
             m.ci();
             m.out();
         } else if m.sr() {
@@ -216,10 +217,10 @@ A =  X / 'Y' ;
     );
     assert!(matches!(program(&mut m), Ok(meta::Recognized)));
     assert_eq!(
-        m.generated(),
+        m.generated().expect("failed regcognition"),
         r#"        ADR A
 A
-        CLL  X
+        CLL X
         BF  A001 
 A001 
         BT  A002 

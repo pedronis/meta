@@ -183,7 +183,7 @@ impl<'a> M<'a> {
         self.sw = true;
     }
 
-    pub fn be(&mut self) -> MResult {
+    pub fn be(&self) -> MResult {
         if !self.sw {
             return Err(SynError::Unexpected);
         }
@@ -255,15 +255,82 @@ impl<'a> M<'a> {
     }
 
     pub fn left(&self) -> String {
-        self.input[self.pos..].to_string()
+        self.input[self.pos..].trim_start().to_string()
     }
 
-    pub fn generated(&self) -> String {
-        self.output.to_string()
+    pub fn generated(&self) -> Result<String, SynError> {
+        self.be()?;
+        if !self.left().is_empty() {
+            return Err(SynError::Unexpected);
+        }
+        Ok(self.output.to_string())
     }
 
-    pub fn execute(&mut self, _pgm: &mparse::MProgram<MInstr>) {
-        panic!("execute not implemented")
+    pub fn execute(&mut self, pgm: &mparse::MProgram<MInstr>) {
+        let mut ic: usize;
+        self.cll(0);
+        match &pgm.instrs[0] {
+            MInstr::ADR(_, start) => ic = *start,
+            _ => panic!("invalid program prolog"),
+        }
+        loop {
+            match &pgm.instrs[ic] {
+                MInstr::Undef => panic!("Undef unexpected in program"),
+                MInstr::ADR(_, _) => panic!("ADR unexpected after prolog"),
+                MInstr::TST(s) => {
+                    self.tst(s);
+                }
+                MInstr::ID => {
+                    self.id();
+                }
+                MInstr::NUM => {
+                    self.num();
+                }
+                MInstr::SR => {
+                    self.sr();
+                }
+                MInstr::CLL(_, procc) => {
+                    self.cll(ic + 1);
+                    ic = *procc;
+                    continue;
+                }
+                MInstr::R => {
+                    ic = self.r();
+                    if ic == 0 {
+                        break;
+                    }
+                    continue;
+                }
+                MInstr::SET => self.set(),
+                MInstr::B(_, jic) => {
+                    ic = *jic;
+                    continue;
+                }
+                MInstr::BT(_, jic) => {
+                    if self.sw {
+                        ic = *jic;
+                        continue;
+                    }
+                }
+                MInstr::BF(_, jic) => {
+                    if !self.sw {
+                        ic = *jic;
+                        continue;
+                    }
+                }
+                MInstr::BE => match self.be() {
+                    Ok(Recognized) => (),
+                    _ => break,
+                },
+                MInstr::CL(s) => self.cl(s),
+                MInstr::CI => self.ci(),
+                MInstr::GN1 => self.gn1(),
+                MInstr::GN2 => self.gn2(),
+                MInstr::LB => self.lb(),
+                MInstr::OUT => self.out(),
+            };
+            ic += 1;
+        }
     }
 }
 
@@ -367,11 +434,19 @@ impl ParseableInstr for MInstr {
 
 pub fn run(opts: Options) -> Result<(), Box<dyn Error>> {
     let p = mparse::load::<MInstr>(&opts.mpgm_path)?;
-    println!("{p:#?}");
     let source = fs::read_to_string(&opts.source_path)?;
     let mut m = M::new(&source);
     m.execute(&p);
-    Ok(())
+    match m.generated() {
+        Ok(out) => {
+            println!("{}", out);
+            Ok(())
+        }
+        Err(_) => {
+            println!("unexpected:\n{}", m.left());
+            Err(From::from("compilation failed"))
+        }
+    }
 }
 
 pub struct Options {
