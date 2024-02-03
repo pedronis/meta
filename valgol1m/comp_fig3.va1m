@@ -1,0 +1,29 @@
+        B  A001 
+X
+        BLK 1 
+A001 
+        LDL 0
+        ST  X
+A002 
+        LD  X
+        LDL 3
+        EQU 
+        BTP  B001 
+        LD  X
+        LD  X
+        MLT 
+        LDL 10
+        MLT 
+        LDL 1
+        ADD 
+        EDT '*'
+        PNT 
+        LD  X
+        LDL 0.1
+        ADD 
+        ST  X
+        B  A002 
+B001 
+        HLT 
+        END 
+        
